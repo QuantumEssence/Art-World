@@ -36,8 +36,8 @@ const DraggablePanel = ({ title, defaultPosition, children, className = '' }) =>
     <div 
       className={`glass-panel draggable-panel `}
       style={{
-        left: ${position.x}px,
-        top: ${position.y}px,
+        left: `${position.x}px`,
+        top: `${position.y}px`,
         position: 'absolute',
         zIndex: 100,
         padding: '0',
