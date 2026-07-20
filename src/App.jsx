@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, Upload, Plus, Trash2, Eye, EyeOff, Minus, Maximize, MousePointer2, Move, Crosshair } from 'lucide-react';
+import { Download, Upload, Plus, Trash2, Eye, EyeOff, Minus, Maximize, MousePointer2, Move, Crosshair, Undo2 } from 'lucide-react';
 import DrawingCanvas from './components/DrawingCanvas';
 import Toolbar from './components/Toolbar';
 import LayersPanel from './components/LayersPanel';
