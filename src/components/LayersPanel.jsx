@@ -1,13 +1,13 @@
 import React from 'react';
-import { Plus, Trash2, Eye, EyeOff, Layers } from 'lucide-react';
+import { Plus, Trash2, Eye, EyeOff, Layers, Eraser } from 'lucide-react';
 
 const LayersPanel = ({ 
   layers, 
   activeLayerId, setActiveLayerId, 
-  updateLayer, addLayer, deleteLayer 
+  updateLayer, addLayer, deleteLayer, clearLayer
 }) => {
   return (
-    <div className="glass-panel layers-panel">
+    <div className="layer-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '300px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
           <Layers size={20} /> Layers
@@ -35,6 +35,16 @@ const LayersPanel = ({
                   }}
                 >
                   {layer.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                </button>
+                <button 
+                  className="icon-button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    clearLayer(layer.id);
+                  }}
+                  title="Clear Layer"
+                >
+                  <Eraser size={16} />
                 </button>
                 <button 
                   className="icon-button danger"

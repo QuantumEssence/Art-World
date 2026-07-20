@@ -1,15 +1,19 @@
 import React from 'react';
-import { Download, Upload, Undo2, MousePointer2, Move, Crosshair, Grid } from 'lucide-react';
+import { Download, Upload, Undo2, Redo2, MousePointer2, Move, Crosshair, Grid, Eraser, Magnet, FolderOpen } from 'lucide-react';
 
 const Toolbar = ({ 
   tool, setTool, 
   symmetry, setSymmetry, 
+  drawMode, setDrawMode,
+  snapToGrid, setSnapToGrid,
   handleUndo, canUndo,
-  exportImage, saveProject, loadProject,
+  handleRedo, canRedo,
+  exportImage, exportSVG,
+  saveProject, loadProject, openGallery,
   gridSpacing, setGridSpacing
 }) => {
   return (
-    <div className="glass-panel toolbar">
+    <div className="tool-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div className="tool-group">
         <h3>Tools</h3>
         <div className="button-row">
@@ -19,6 +23,13 @@ const Toolbar = ({
             title="Draw Line"
           >
             <MousePointer2 size={18} /> Draw
+          </button>
+          <button 
+            className={tool === 'erase' ? 'active' : ''} 
+            onClick={() => setTool('erase')}
+            title="Erase"
+          >
+            <Eraser size={18} /> Erase
           </button>
           <button 
             className={tool === 'pan' ? 'active' : ''} 
@@ -34,6 +45,51 @@ const Toolbar = ({
           >
             <Crosshair size={18} /> Center
           </button>
+        </div>
+      </div>
+
+      <div className="tool-group">
+        <h3>Draw Mode</h3>
+        <div className="button-row">
+          <button 
+            className={drawMode === 'segment' ? 'active' : ''} 
+            onClick={() => setDrawMode('segment')}
+          >
+            Segment
+          </button>
+          <button 
+            className={drawMode === 'continuous' ? 'active' : ''} 
+            onClick={() => setDrawMode('continuous')}
+          >
+            Continuous
+          </button>
+        </div>
+      </div>
+
+      <div className="tool-group">
+        <h3>Grid Options</h3>
+        <div className="button-row">
+          <button 
+            className={snapToGrid ? 'active' : ''} 
+            onClick={() => setSnapToGrid(!snapToGrid)}
+            title="Snap to Grid"
+          >
+            <Magnet size={18} /> Snap
+          </button>
+        </div>
+      </div>
+
+      <div className="tool-group">
+        <h3>Grid Size</h3>
+        <div className="button-row" style={{ alignItems: 'center' }}>
+          <Grid size={18} />
+          <input 
+            type="range" 
+            min="10" max="100" 
+            value={gridSpacing}
+            onChange={(e) => setGridSpacing(Number(e.target.value))}
+            style={{ width: '100px' }}
+          />
         </div>
       </div>
 
@@ -62,24 +118,13 @@ const Toolbar = ({
       </div>
 
       <div className="tool-group">
-        <h3>Grid Size</h3>
-        <div className="button-row" style={{ alignItems: 'center' }}>
-          <Grid size={18} />
-          <input 
-            type="range" 
-            min="10" max="100" 
-            value={gridSpacing}
-            onChange={(e) => setGridSpacing(Number(e.target.value))}
-            style={{ width: '100px' }}
-          />
-        </div>
-      </div>
-
-      <div className="tool-group">
         <h3>Actions</h3>
         <div className="button-row">
           <button onClick={handleUndo} disabled={!canUndo} style={{ opacity: canUndo ? 1 : 0.5 }}>
             <Undo2 size={18} /> Undo
+          </button>
+          <button onClick={handleRedo} disabled={!canRedo} style={{ opacity: canRedo ? 1 : 0.5 }}>
+            <Redo2 size={18} /> Redo
           </button>
         </div>
       </div>
@@ -87,11 +132,11 @@ const Toolbar = ({
       <div className="tool-group">
         <h3>File</h3>
         <div className="button-row">
-          <button onClick={exportImage}>
-            <Download size={18} /> PNG
+          <button onClick={() => openGallery()}>
+            <FolderOpen size={18} /> Gallery
           </button>
           <button onClick={saveProject}>
-            <Download size={18} /> Save
+            <Download size={18} /> Save JSON
           </button>
           <label className="button" style={{
             background: 'rgba(255, 255, 255, 0.05)',
@@ -105,9 +150,17 @@ const Toolbar = ({
             alignItems: 'center',
             gap: '6px'
           }}>
-            <Upload size={18} /> Load
+            <Upload size={18} /> Load JSON
             <input type="file" accept=".json" style={{ display: 'none' }} onChange={loadProject} />
           </label>
+        </div>
+        <div className="button-row" style={{ marginTop: '8px' }}>
+          <button onClick={exportImage}>
+            <Download size={18} /> PNG
+          </button>
+          <button onClick={exportSVG}>
+            <Download size={18} /> SVG
+          </button>
         </div>
       </div>
     </div>

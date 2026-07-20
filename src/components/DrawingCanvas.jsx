@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 const DrawingCanvas = forwardRef(({ 
-  layers, activeLayerId, tool, symmetry, centerPoint, setCenterPoint, gridSpacing, onAddLine 
+  layers, activeLayerId, tool, symmetry, centerPoint, setCenterPoint, 
+  drawMode, snapToGrid, gridSpacing, onAddLine, onEraseLines 
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -14,7 +16,13 @@ const DrawingCanvas = forwardRef(({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [currentLineStart, setCurrentLineStart] = useState(null);
+  const [currentStroke, setCurrentStroke] = useState([]);
+  const [isErasing, setIsErasing] = useState(false);
   const [mousePos, setMousePos] = useState(null);
+
+  // Multi-touch state
+  const activePointers = useRef(new Map());
+  const pinchState = useRef(null);
 
   useImperativeHandle(ref, () => canvasRef.current);
 
@@ -84,8 +92,8 @@ const DrawingCanvas = forwardRef(({
       ctx.restore();
     });
 
-    // Draw active preview line
-    if (tool === 'draw' && currentLineStart && mousePos) {
+    // Draw active preview line or current stroke
+    if (tool === 'draw') {
       const activeLayer = layers.find(l => l.id === activeLayerId);
       if (activeLayer) {
         ctx.save();
@@ -93,25 +101,37 @@ const DrawingCanvas = forwardRef(({
         ctx.strokeStyle = activeLayer.color;
         ctx.lineWidth = 2;
         
-        const endPoint = snapToGridPoint(mousePos);
-        const linesToDraw = getSymmetricLines(currentLineStart, endPoint);
-        
         ctx.beginPath();
-        linesToDraw.forEach(line => {
-          ctx.moveTo(line.start.x, line.start.y);
-          ctx.lineTo(line.end.x, line.end.y);
-        });
+        
+        // Draw continuous stroke
+        if (currentStroke.length > 0) {
+          currentStroke.forEach(line => {
+            ctx.moveTo(line.start.x, line.start.y);
+            ctx.lineTo(line.end.x, line.end.y);
+          });
+        }
+        
+        // Draw segment preview
+        if (currentLineStart && mousePos && drawMode === 'segment') {
+          const endPoint = snapToGridPoint(mousePos);
+          const linesToDraw = getSymmetricLines(currentLineStart, endPoint);
+          linesToDraw.forEach(line => {
+            ctx.moveTo(line.start.x, line.start.y);
+            ctx.lineTo(line.end.x, line.end.y);
+          });
+        }
+        
         ctx.stroke();
         ctx.restore();
       }
     }
     
     // Draw snap indicator
-    if ((tool === 'draw' || tool === 'center') && mousePos) {
-      const snapped = snapToGridPoint(mousePos);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    if ((tool === 'draw' || tool === 'center' || tool === 'erase') && mousePos) {
+      const snapped = tool === 'erase' ? mousePos : snapToGridPoint(mousePos);
+      ctx.fillStyle = tool === 'erase' ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255, 255, 255, 0.5)';
       ctx.beginPath();
-      ctx.arc(snapped.x, snapped.y, 4, 0, Math.PI * 2);
+      ctx.arc(snapped.x, snapped.y, tool === 'erase' ? 6 : 4, 0, Math.PI * 2);
       ctx.fill();
     }
     
@@ -120,7 +140,7 @@ const DrawingCanvas = forwardRef(({
 
   useEffect(() => {
     draw();
-  }, [layers, transform, mousePos, currentLineStart, symmetry, centerPoint, tool, activeLayerId]);
+  }, [layers, transform, mousePos, currentLineStart, currentStroke, symmetry, centerPoint, tool, activeLayerId]);
 
   const drawGrid = (ctx, canvas, transform) => {
     // Calculate visible bounds in world coordinates
@@ -208,6 +228,8 @@ const DrawingCanvas = forwardRef(({
   };
 
   const snapToGridPoint = (worldPoint) => {
+    if (!snapToGrid && tool !== 'center') return worldPoint;
+    
     // The user wants to snap to dots OR perfectly between 4 dots.
     // Standard snapping to dots:
     let snappedX = Math.round(worldPoint.x / gridSpacing) * gridSpacing;
@@ -223,8 +245,55 @@ const DrawingCanvas = forwardRef(({
     return { x: snappedX, y: snappedY };
   };
 
+  const distToSegmentSquared = (p, v, w) => {
+    const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+    if (l2 === 0) return (p.x - v.x) ** 2 + (p.y - v.y) ** 2;
+    let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
+  };
+
+  const performErase = (worldPos) => {
+    const activeLayer = layers.find(l => l.id === activeLayerId);
+    if (!activeLayer) return;
+    
+    // Eraser radius in world coordinates
+    const eraseRadiusSq = (10 / transform.scale) ** 2;
+    const linesToRemove = [];
+    
+    activeLayer.lines.forEach(line => {
+      const distSq = distToSegmentSquared(worldPos, line.start, line.end);
+      if (distSq < eraseRadiusSq) {
+        linesToRemove.push(line);
+      }
+    });
+    
+    if (linesToRemove.length > 0) {
+      onEraseLines(linesToRemove);
+    }
+  };
+
   // Event Handlers
   const handlePointerDown = (e) => {
+    e.target.setPointerCapture(e.pointerId);
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointers.current.size === 2) {
+      const points = Array.from(activePointers.current.values());
+      const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      pinchState.current = { 
+        dist, 
+        midX: (points[0].x + points[1].x) / 2, 
+        midY: (points[0].y + points[1].y) / 2, 
+        initialTransform: { ...transform } 
+      };
+      
+      setIsDragging(false);
+      setCurrentLineStart(null);
+      setCurrentStroke([]);
+      return;
+    }
+
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -242,11 +311,45 @@ const DrawingCanvas = forwardRef(({
       setCenterPoint(snapped);
     } else if (tool === 'draw') {
       setCurrentLineStart(snapped);
+      setCurrentStroke([]);
+    } else if (tool === 'erase') {
+      setIsErasing(true);
+      performErase(worldPos);
     }
   };
 
   const handlePointerMove = (e) => {
+    if (activePointers.current.has(e.pointerId)) {
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
     const rect = canvasRef.current.getBoundingClientRect();
+
+    if (activePointers.current.size === 2 && pinchState.current) {
+      const points = Array.from(activePointers.current.values());
+      const newDist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      const newMidX = (points[0].x + points[1].x) / 2;
+      const newMidY = (points[0].y + points[1].y) / 2;
+      
+      const { dist, midX, midY, initialTransform } = pinchState.current;
+      
+      let newScale = initialTransform.scale * (newDist / dist);
+      newScale = Math.max(0.1, Math.min(newScale, 5));
+      
+      const scaleRatio = newScale / initialTransform.scale;
+      
+      const offsetX = newMidX - rect.left;
+      const offsetY = newMidY - rect.top;
+      const initialMidX = midX - rect.left;
+      const initialMidY = midY - rect.top;
+      
+      const newX = offsetX - (initialMidX - initialTransform.x) * scaleRatio;
+      const newY = offsetY - (initialMidY - initialTransform.y) * scaleRatio;
+      
+      setTransform({ x: newX, y: newY, scale: newScale });
+      return;
+    }
+
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
@@ -257,37 +360,64 @@ const DrawingCanvas = forwardRef(({
         y: y - dragStart.y
       }));
     } else {
-      setMousePos(screenToWorld(x, y));
+      const worldPos = screenToWorld(x, y);
+      setMousePos(worldPos);
+      
+      if (tool === 'draw' && currentLineStart && drawMode === 'continuous') {
+        const endPoint = snapToGridPoint(worldPos);
+        if (currentLineStart.x !== endPoint.x || currentLineStart.y !== endPoint.y) {
+          const newLines = getSymmetricLines(currentLineStart, endPoint);
+          setCurrentStroke(prev => [...prev, ...newLines]);
+          setCurrentLineStart(endPoint);
+        }
+      } else if (tool === 'erase' && isErasing) {
+        performErase(worldPos);
+      }
     }
   };
 
   const handlePointerUp = (e) => {
+    activePointers.current.delete(e.pointerId);
+    e.target.releasePointerCapture(e.pointerId);
+
+    if (activePointers.current.size < 2) {
+      pinchState.current = null;
+    }
+
     if (isDragging) {
       setIsDragging(false);
       return;
     }
 
-    if (tool === 'draw' && currentLineStart && mousePos) {
-      const endPoint = snapToGridPoint(mousePos);
-      
-      // Don't draw if start and end are the same
-      if (currentLineStart.x !== endPoint.x || currentLineStart.y !== endPoint.y) {
-        const newLines = getSymmetricLines(currentLineStart, endPoint);
-        onAddLine(newLines);
+    if (tool === 'draw') {
+      if (drawMode === 'segment' && currentLineStart && mousePos) {
+        const endPoint = snapToGridPoint(mousePos);
+        
+        if (currentLineStart.x !== endPoint.x || currentLineStart.y !== endPoint.y) {
+          const newLines = getSymmetricLines(currentLineStart, endPoint);
+          onAddLine(newLines);
+        }
+      } else if (drawMode === 'continuous' && currentStroke.length > 0) {
+        onAddLine(currentStroke);
       }
       
-      setCurrentLineStart(endPoint); // Allow continuous drawing by keeping the end point as the new start
-      // To break the line, user can right click or hit escape. Or just set currentLineStart to null.
-      // Let's make it click-to-start, click-to-end (continuous)
-      // Actually, standard drawing is drag. Let's make it drag-based.
       setCurrentLineStart(null);
+      setCurrentStroke([]);
+    } else if (tool === 'erase') {
+      setIsErasing(false);
     }
   };
 
-  const handlePointerLeave = () => {
+  const handlePointerLeave = (e) => {
+    activePointers.current.delete(e.pointerId);
+    if (activePointers.current.size < 2) {
+      pinchState.current = null;
+    }
     setMousePos(null);
     setCurrentLineStart(null);
+    setCurrentStroke([]);
     setIsDragging(false);
+    setIsErasing(false);
   };
 
   const handleWheel = (e) => {
@@ -316,6 +446,21 @@ const DrawingCanvas = forwardRef(({
     });
   };
 
+  const handleZoom = (factor) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mouseX = rect.width / 2;
+    const mouseY = rect.height / 2;
+    
+    let newScale = transform.scale * factor;
+    newScale = Math.max(0.1, Math.min(newScale, 5));
+    
+    const scaleRatio = newScale / transform.scale;
+    const newX = mouseX - (mouseX - transform.x) * scaleRatio;
+    const newY = mouseY - (mouseY - transform.y) * scaleRatio;
+    
+    setTransform({ x: newX, y: newY, scale: newScale });
+  };
+
   return (
     <div 
       ref={containerRef} 
@@ -329,8 +474,37 @@ const DrawingCanvas = forwardRef(({
         onPointerLeave={handlePointerLeave}
         onWheel={handleWheel}
         style={{ touchAction: 'none' }}
-        onContextMenu={(e) => e.preventDefault()} // Prevent right-click menu to use right-click for breaking lines later if needed
+        onContextMenu={(e) => e.preventDefault()}
       />
+      <div style={{ 
+        position: 'absolute', bottom: '20px', left: '20px', 
+        display: 'flex', gap: '8px', zIndex: 50 
+      }}>
+        <button 
+          className="icon-button" 
+          style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}
+          onClick={() => handleZoom(1.2)}
+          title="Zoom In"
+        >
+          <ZoomIn size={18} />
+        </button>
+        <button 
+          className="icon-button" 
+          style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}
+          onClick={() => handleZoom(1/1.2)}
+          title="Zoom Out"
+        >
+          <ZoomOut size={18} />
+        </button>
+        <button 
+          className="icon-button" 
+          style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}
+          onClick={() => setTransform({ x: 0, y: 0, scale: 1 })}
+          title="Reset View"
+        >
+          <Maximize size={18} />
+        </button>
+      </div>
     </div>
   );
 });
