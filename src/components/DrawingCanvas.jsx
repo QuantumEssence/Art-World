@@ -3,7 +3,7 @@ import { ZoomIn, ZoomOut, Maximize, Undo2 } from 'lucide-react';
 
 const DrawingCanvas = forwardRef(({ 
   layers, activeLayerId, tool, symmetry, centerPoint, setCenterPoint, 
-  drawMode, snapToGrid, gridSpacing, onAddLine, onEraseLines 
+  drawMode, snapToGrid, gridSpacing, handleUndo, canUndo, onAddLine, onEraseLines 
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
