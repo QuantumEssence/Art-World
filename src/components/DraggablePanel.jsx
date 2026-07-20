@@ -64,6 +64,7 @@ const DraggablePanel = ({ title, defaultPosition, children, className = '' }) =>
           borderTopRightRadius: '12px',
           borderBottomLeftRadius: isCollapsed ? '12px' : '0',
           borderBottomRightRadius: isCollapsed ? '12px' : '0',
+          touchAction: 'none'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

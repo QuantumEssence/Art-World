@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
-import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize, Undo2 } from 'lucide-react';
 
 const DrawingCanvas = forwardRef(({ 
   layers, activeLayerId, tool, symmetry, centerPoint, setCenterPoint, 
@@ -503,6 +503,15 @@ const DrawingCanvas = forwardRef(({
           title="Reset View"
         >
           <Maximize size={18} />
+        </button>
+        <button 
+          className="icon-button" 
+          style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)', opacity: canUndo ? 1 : 0.5 }}
+          onClick={handleUndo}
+          title="Undo"
+          disabled={!canUndo}
+        >
+          <Undo2 size={18} />
         </button>
       </div>
     </div>

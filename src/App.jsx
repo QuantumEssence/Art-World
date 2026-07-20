@@ -281,6 +281,8 @@ function App() {
           centerPoint={centerPoint}
           setCenterPoint={setCenterPoint}
           gridSpacing={gridSpacing}
+          handleUndo={handleUndo}
+          canUndo={history.length > 0}
           onAddLine={handleAddLine}
           onEraseLines={handleEraseLines}
         />
