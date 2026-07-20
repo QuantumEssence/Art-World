@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, FolderOpen, Trash2 } from 'lucide-react';
+import localforage from 'localforage';
 
 const GalleryModal = ({ onClose, onSave, onLoad }) => {
   const [projects, setProjects] = useState([]);
@@ -9,23 +10,28 @@ const GalleryModal = ({ onClose, onSave, onLoad }) => {
     loadProjects();
   }, []);
 
-  const loadProjects = () => {
-    const saved = localStorage.getItem('artWorldProjects');
-    if (saved) {
-      setProjects(JSON.parse(saved));
+  const loadProjects = async () => {
+    try {
+      const saved = await localforage.getItem('artWorldProjects');
+      if (saved) {
+        setProjects(saved);
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
   const handleSave = () => {
     if (!newName.trim()) return;
-    onSave(newName);
-    setNewName('');
-    loadProjects();
+    onSave(newName).then(() => {
+      setNewName('');
+      loadProjects();
+    });
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     const updated = projects.filter(p => p.id !== id);
-    localStorage.setItem('artWorldProjects', JSON.stringify(updated));
+    await localforage.setItem('artWorldProjects', updated);
     setProjects(updated);
   };
 

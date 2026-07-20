@@ -5,6 +5,10 @@ import Toolbar from './components/Toolbar';
 import LayersPanel from './components/LayersPanel';
 import DraggablePanel from './components/DraggablePanel';
 import GalleryModal from './components/GalleryModal';
+import localforage from 'localforage';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -19,18 +23,7 @@ const defaultLayer = () => ({
 });
 
 function App() {
-  const [layers, setLayers] = useState(() => {
-    const autosave = localStorage.getItem('artWorldAutosave');
-    if (autosave) {
-      try {
-        const parsed = JSON.parse(autosave);
-        if (parsed.layers) return parsed.layers;
-      } catch (e) {
-        console.error("Failed to parse autosave", e);
-      }
-    }
-    return [defaultLayer()];
-  });
+  const [layers, setLayers] = useState([defaultLayer()]);
   const [activeLayerId, setActiveLayerId] = useState(layers[0].id);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   
@@ -41,21 +34,33 @@ function App() {
   const [drawMode, setDrawMode] = useState('segment'); // segment, continuous
   const [snapToGrid, setSnapToGrid] = useState(true);
   
-  const [gridSpacing, setGridSpacing] = useState(() => {
-    const autosave = localStorage.getItem('artWorldAutosave');
-    if (autosave) {
-      try {
-        const parsed = JSON.parse(autosave);
-        if (parsed.gridSpacing) return parsed.gridSpacing;
-      } catch (e) {}
-    }
-    return 40;
-  });
+  const [gridSpacing, setGridSpacing] = useState(40);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
+    const loadAutosave = async () => {
+      try {
+        const autosave = await localforage.getItem('artWorldAutosave');
+        if (autosave) {
+          if (autosave.layers && autosave.layers.length > 0) {
+            setLayers(autosave.layers);
+            setActiveLayerId(autosave.layers[0].id);
+          }
+          if (autosave.gridSpacing) setGridSpacing(autosave.gridSpacing);
+        }
+      } catch (e) {
+        console.error("Failed to load autosave", e);
+      }
+      setIsLoaded(true);
+    };
+    loadAutosave();
+  }, []);
+
+  useEffect(() => {
+    if (!isLoaded) return;
     const saveData = { layers, gridSpacing };
-    localStorage.setItem('artWorldAutosave', JSON.stringify(saveData));
-  }, [layers, gridSpacing]);
+    localforage.setItem('artWorldAutosave', saveData).catch(e => console.error("Autosave failed", e));
+  }, [layers, gridSpacing, isLoaded]);
   
   const [history, setHistory] = useState([]);
   const [redoHistory, setRedoHistory] = useState([]);
@@ -136,17 +141,48 @@ function App() {
   // Export functionality
   const canvasRef = useRef(null);
   
-  const exportImage = () => {
+  const exportImage = async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
-    const url = canvas.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `art-world-${Date.now()}.png`;
-    a.click();
+    
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width;
+    exportCanvas.height = canvas.height;
+    const ctx = exportCanvas.getContext('2d');
+    
+    ctx.fillStyle = '#121212';
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(canvas, 0, 0);
+    
+    const dataUrl = exportCanvas.toDataURL('image/png');
+    const fileName = `art-world-${Date.now()}.png`;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const base64Data = dataUrl.split(',')[1];
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: base64Data,
+          directory: Directory.Cache
+        });
+        await Share.share({
+          title: 'Art World Export',
+          url: result.uri,
+          dialogTitle: 'Share or Save your Artwork'
+        });
+      } catch (e) {
+        console.error("Export Image error:", e);
+        alert('Failed to save or share on device.');
+      }
+    } else {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = fileName;
+      a.click();
+    }
   };
 
-  const exportSVG = () => {
+  const exportSVG = async () => {
     let minX = 0, minY = 0, maxX = 0, maxY = 0;
     let hasPoints = false;
 
@@ -184,26 +220,73 @@ function App() {
     });
     
     svgContent += `</svg>`;
-    const blob = new Blob([svgContent], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `art-world-${Date.now()}.svg`;
-    a.click();
+    const fileName = `art-world-${Date.now()}.svg`;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: svgContent,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8
+        });
+        await Share.share({
+          title: 'Art World Vector',
+          url: result.uri,
+          dialogTitle: 'Share SVG File'
+        });
+      } catch (e) {
+        console.error("Export SVG error:", e);
+        alert("Failed to export SVG on device.");
+      }
+    } else {
+      const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
-  const saveProject = () => {
+  const saveProject = async () => {
     const projectData = {
       layers,
       symmetry,
       centerPoint,
-      gridSpacing
+      gridSpacing,
+      version: 1
     };
-    const blob = new Blob([JSON.stringify(projectData)], { type: 'application/json' });
-    const link = document.createElement('a');
-    link.download = 'art-world-project.json';
-    link.href = URL.createObjectURL(blob);
-    link.click();
+    const jsonString = JSON.stringify(projectData);
+    const fileName = `art-world-project-${Date.now()}.json`;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: jsonString,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8
+        });
+        await Share.share({
+          title: 'Art World Project',
+          url: result.uri,
+          dialogTitle: 'Share Project File'
+        });
+      } catch (e) {
+        console.error("Save JSON error:", e);
+        alert("Failed to save project on device.");
+      }
+    } else {
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const loadProject = (e) => {
@@ -228,15 +311,20 @@ function App() {
     e.target.value = null; // Reset input
   };
 
-  const handleSaveToGallery = (name) => {
-    const saved = JSON.parse(localStorage.getItem('artWorldProjects') || '[]');
-    const newProject = {
-      id: generateId(),
-      name,
-      date: new Date().toISOString(),
-      data: { layers, gridSpacing }
-    };
-    localStorage.setItem('artWorldProjects', JSON.stringify([newProject, ...saved]));
+  const handleSaveToGallery = async (name) => {
+    try {
+      const saved = await localforage.getItem('artWorldProjects') || [];
+      const newProject = {
+        id: generateId(),
+        name,
+        date: new Date().toISOString(),
+        data: { layers, gridSpacing }
+      };
+      await localforage.setItem('artWorldProjects', [newProject, ...saved]);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save project to gallery.");
+    }
   };
 
   const handleLoadFromGallery = (project) => {
@@ -268,6 +356,29 @@ function App() {
           setGridSpacing={setGridSpacing}
         />
       </DraggablePanel>
+      <button 
+        className="quick-undo-btn"
+        onClick={handleUndo} 
+        disabled={history.length === 0} 
+        style={{ 
+          position: 'absolute',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 90,
+          opacity: history.length > 0 ? 1 : 0.4,
+          padding: '20px',
+          borderRadius: '50%',
+          background: 'var(--panel-bg)',
+          border: '1px solid var(--border-color)',
+          color: 'var(--text-main)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      >
+        <Undo2 size={28} />
+      </button>
       
       <div className="canvas-container">
         <DrawingCanvas 
