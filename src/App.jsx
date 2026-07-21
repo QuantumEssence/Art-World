@@ -35,8 +35,8 @@ function App() {
   
   const [tool, setTool] = useState('draw'); // draw, pan, center, erase
   const [symmetry, setSymmetry] = useState('none'); // none, 2-way, 4-way
-  const [canvasWidth, setCanvasWidth] = useState(2000);
-  const [canvasHeight, setCanvasHeight] = useState(2000);
+  const [canvasWidth, setCanvasWidth] = useState(50);
+  const [canvasHeight, setCanvasHeight] = useState(50);
   const [centerPoint, setCenterPoint] = useState({ x: 1000, y: 1000 }); 
   const [brushSize, setBrushSize] = useState(2);
   

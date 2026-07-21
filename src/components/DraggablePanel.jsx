@@ -5,35 +5,57 @@ const DraggablePanel = ({ title, defaultPosition, children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [position, setPosition] = useState(defaultPosition || { x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
+  const panelRef = useRef(null);
+  const hasMovedRef = useRef(false);
 
   const handlePointerDown = (e) => {
     if (e.target.closest('button')) return;
     setIsDragging(true);
+    hasMovedRef.current = false;
     dragStartRef.current = { 
-      x: e.clientX - position.x, 
-      y: e.clientY - position.y 
+      offsetX: e.clientX - position.x, 
+      offsetY: e.clientY - position.y,
+      clientX: e.clientX,
+      clientY: e.clientY
     };
     e.target.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e) => {
     if (!isDragging) return;
-    setPosition({
-      x: e.clientX - dragStartRef.current.x,
-      y: e.clientY - dragStartRef.current.y
-    });
+    
+    if (Math.abs(e.clientX - dragStartRef.current.clientX) > 3 || Math.abs(e.clientY - dragStartRef.current.clientY) > 3) {
+      hasMovedRef.current = true;
+    }
+
+    let newX = e.clientX - dragStartRef.current.offsetX;
+    let newY = e.clientY - dragStartRef.current.offsetY;
+    
+    if (panelRef.current) {
+      const rect = panelRef.current.getBoundingClientRect();
+      const maxX = window.innerWidth - rect.width;
+      const maxY = window.innerHeight - rect.height;
+      newX = Math.max(0, Math.min(newX, maxX));
+      newY = Math.max(0, Math.min(newY, maxY));
+    }
+
+    setPosition({ x: newX, y: newY });
   };
 
   const handlePointerUp = (e) => {
     if (isDragging) {
       setIsDragging(false);
       e.target.releasePointerCapture(e.pointerId);
+      
+      if (!hasMovedRef.current) {
+        setIsCollapsed(!isCollapsed);
+      }
     }
   };
 
   return (
     <div 
+      ref={panelRef}
       className={`glass-panel draggable-panel `}
       style={{
         left: `${position.x}px`,

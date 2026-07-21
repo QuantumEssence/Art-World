@@ -35,14 +35,16 @@ const DrawingCanvas = forwardRef(({
   useImperativeHandle(ref, () => ({
     getCanvas: () => canvasRef.current,
     exportHighRes: () => {
+      const pixelWidth = canvasWidth * gridSpacing;
+      const pixelHeight = canvasHeight * gridSpacing;
       const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = canvasWidth;
-      exportCanvas.height = canvasHeight;
+      exportCanvas.width = pixelWidth;
+      exportCanvas.height = pixelHeight;
       const eCtx = exportCanvas.getContext('2d');
       
       // Draw background
       eCtx.fillStyle = '#1a1a2e';
-      eCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+      eCtx.fillRect(0, 0, pixelWidth, pixelHeight);
       
       // Draw layers
       layers.forEach(layer => {
@@ -131,20 +133,22 @@ const DrawingCanvas = forwardRef(({
   // Update layer cache
   const updateLayerCache = (layer) => {
     let cache = layerCache.current.get(layer.id);
+    const pixelWidth = canvasWidth * gridSpacing;
+    const pixelHeight = canvasHeight * gridSpacing;
     
     // Check if we need to recreate the cache canvas (size change or missing)
-    if (!cache || cache.width !== canvasWidth || cache.height !== canvasHeight) {
+    if (!cache || cache.width !== pixelWidth || cache.height !== pixelHeight) {
       const c = document.createElement('canvas');
-      c.width = canvasWidth;
-      c.height = canvasHeight;
-      cache = { canvas: c, updatedAt: 0, width: canvasWidth, height: canvasHeight };
+      c.width = pixelWidth;
+      c.height = pixelHeight;
+      cache = { canvas: c, updatedAt: 0, width: pixelWidth, height: pixelHeight };
       layerCache.current.set(layer.id, cache);
     }
     
     // Check if layer content has changed
     if (cache.updatedAt !== layer.updatedAt) {
       const cCtx = cache.canvas.getContext('2d');
-      cCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+      cCtx.clearRect(0, 0, pixelWidth, pixelHeight);
       
       cCtx.strokeStyle = layer.color;
       cCtx.lineCap = 'round';
@@ -218,15 +222,18 @@ const DrawingCanvas = forwardRef(({
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.scale, transform.scale);
     
+    const pixelWidth = canvasWidth * gridSpacing;
+    const pixelHeight = canvasHeight * gridSpacing;
+    
     // Draw Finite Canvas Bounds (Border)
     ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = 1 / transform.scale;
-    ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
+    ctx.strokeRect(0, 0, pixelWidth, pixelHeight);
     
     // Draw Grid (clipped to finite canvas)
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, canvasWidth, canvasHeight);
+    ctx.rect(0, 0, pixelWidth, pixelHeight);
     ctx.clip();
     drawGrid(ctx, canvas, transform);
     ctx.restore();
@@ -381,8 +388,8 @@ const DrawingCanvas = forwardRef(({
     // Clamp to finite canvas bounds
     startX = Math.max(0, startX);
     startY = Math.max(0, startY);
-    endX = Math.min(canvasWidth, endX);
-    endY = Math.min(canvasHeight, endY);
+    endX = Math.min(canvasWidth * gridSpacing, endX);
+    endY = Math.min(canvasHeight * gridSpacing, endY);
 
     const snapStartX = Math.floor(startX / gridSpacing) * gridSpacing;
     const snapStartY = Math.floor(startY / gridSpacing) * gridSpacing;

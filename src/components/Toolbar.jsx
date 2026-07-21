@@ -179,8 +179,9 @@ const Toolbar = ({
             <span style={{ fontSize: '12px', width: '40px' }}>Width:</span>
             <input 
               type="number" 
+              min={1}
               value={canvasWidth}
-              onChange={(e) => setCanvasWidth(Number(e.target.value))}
+              onChange={(e) => setCanvasWidth(Math.max(1, Number(e.target.value)))}
               style={{ width: '80px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '4px', borderRadius: '4px' }}
             />
           </div>
@@ -188,8 +189,9 @@ const Toolbar = ({
             <span style={{ fontSize: '12px', width: '40px' }}>Height:</span>
             <input 
               type="number" 
+              min={1}
               value={canvasHeight}
-              onChange={(e) => setCanvasHeight(Number(e.target.value))}
+              onChange={(e) => setCanvasHeight(Math.max(1, Number(e.target.value)))}
               style={{ width: '80px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '4px', borderRadius: '4px' }}
             />
           </div>
