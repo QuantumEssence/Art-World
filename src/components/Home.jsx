@@ -6,7 +6,8 @@ const Home = ({ onStart }) => {
     <div style={{
       width: '100vw',
       height: '100vh',
-      background: 'radial-gradient(circle at center, #1e293b 0%, #0f172a 100%)',
+      background: 'url(/icon.jpg) center/cover no-repeat',
+      backgroundColor: '#0f172a',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -52,36 +53,33 @@ const Home = ({ onStart }) => {
         borderRadius: '30px',
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
       }}>
-        <div style={{
-          display: 'flex',
-          gap: '20px',
-          marginBottom: '30px',
-          color: '#38bdf8'
-        }}>
-          <Palette size={48} />
-          <PenTool size={48} />
-          <ImageIcon size={48} />
-        </div>
-        
         <h1 style={{
           fontSize: '4rem',
           fontWeight: '800',
           margin: '0 0 10px 0',
-          background: 'linear-gradient(to right, #38bdf8, #a855f7)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent'
+          color: 'white',
+          textShadow: '0 4px 15px rgba(0,0,0,0.8)'
         }}>
           Art World
         </h1>
         
         <p style={{
-          fontSize: '1.2rem',
-          color: '#94a3b8',
-          marginBottom: '40px',
-          textAlign: 'center',
-          maxWidth: '400px'
+          fontSize: '1.5rem',
+          color: '#e2e8f0',
+          marginBottom: '10px',
+          fontWeight: 'bold',
+          textShadow: '0 2px 10px rgba(0,0,0,0.5)'
         }}>
-          Unleash your creativity with infinite layers, powerful tools, and a beautiful canvas.
+          Version 2.0
+        </p>
+
+        <p style={{
+          fontSize: '1.2rem',
+          color: '#cbd5e1',
+          marginBottom: '40px',
+          textShadow: '0 2px 10px rgba(0,0,0,0.5)'
+        }}>
+          Created by You
         </p>
 
         <button

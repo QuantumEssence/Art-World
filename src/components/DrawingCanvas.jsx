@@ -193,9 +193,12 @@ const DrawingCanvas = forwardRef(({
     const canvas = canvasRef.current;
     
     const dpr = window.devicePixelRatio || 1;
-    if (canvas.width !== containerRef.current.clientWidth * dpr || canvas.height !== containerRef.current.clientHeight * dpr) {
-      canvas.width = containerRef.current.clientWidth * dpr;
-      canvas.height = containerRef.current.clientHeight * dpr;
+    const actualWidth = Math.floor(containerRef.current.clientWidth * dpr);
+    const actualHeight = Math.floor(containerRef.current.clientHeight * dpr);
+    
+    if (canvas.width !== actualWidth || canvas.height !== actualHeight) {
+      canvas.width = actualWidth;
+      canvas.height = actualHeight;
     }
 
     // Clear canvas
