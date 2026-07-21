@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, Upload, Plus, Trash2, Eye, EyeOff, Minus, Maximize, MousePointer2, Move, Crosshair, Undo2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Undo2 } from 'lucide-react';
 import DrawingCanvas from './components/DrawingCanvas';
 import Toolbar from './components/Toolbar';
 import LayersPanel from './components/LayersPanel';
 import DraggablePanel from './components/DraggablePanel';
 import GalleryModal from './components/GalleryModal';
+import Home from './components/Home';
 import localforage from 'localforage';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -19,23 +20,77 @@ const defaultLayer = () => ({
   color: '#38bdf8',
   opacity: 1,
   glow: 10,
-  lines: []
+  blendMode: 'source-over',
+  lines: [],
+  strokes: [],
+  updatedAt: Date.now()
 });
 
 function App() {
+  const [currentRoute, setCurrentRoute] = useState('home'); // 'home', 'editor'
+  
   const [layers, setLayers] = useState([defaultLayer()]);
   const [activeLayerId, setActiveLayerId] = useState(layers[0].id);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   
   const [tool, setTool] = useState('draw'); // draw, pan, center, erase
   const [symmetry, setSymmetry] = useState('none'); // none, 2-way, 4-way
-  const [centerPoint, setCenterPoint] = useState({ x: 0, y: 0 }); // relative to world origin 0,0
+  const [canvasWidth, setCanvasWidth] = useState(2000);
+  const [canvasHeight, setCanvasHeight] = useState(2000);
+  const [centerPoint, setCenterPoint] = useState({ x: 1000, y: 1000 }); 
+  const [brushSize, setBrushSize] = useState(2);
   
   const [drawMode, setDrawMode] = useState('segment'); // segment, continuous
   const [snapToGrid, setSnapToGrid] = useState(true);
   
   const [gridSpacing, setGridSpacing] = useState(40);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isPlayingTimelapse, setIsPlayingTimelapse] = useState(false);
+
+  const timelapseAbortController = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (timelapseAbortController.current) {
+        timelapseAbortController.current.abort();
+      }
+    };
+  }, []);
+
+  const playTimelapse = async () => {
+    if (isPlayingTimelapse) return;
+    setIsPlayingTimelapse(true);
+    timelapseAbortController.current = new AbortController();
+    const signal = timelapseAbortController.current.signal;
+
+    try {
+      const originalLayers = JSON.parse(JSON.stringify(layers));
+      let currentLayers = originalLayers.map(l => ({ ...l, strokes: [], lines: [], updatedAt: Date.now() }));
+      setLayers(currentLayers);
+
+      for (let i = originalLayers.length - 1; i >= 0; i--) {
+        const originalLayer = originalLayers[i];
+        const strokes = originalLayer.strokes || [];
+        const lines = originalLayer.lines || [];
+        
+        for (let j = 0; j < lines.length; j++) {
+          if (signal.aborted) return;
+          currentLayers = currentLayers.map(l => l.id === originalLayer.id ? { ...l, lines: [...l.lines, lines[j]], updatedAt: Date.now() } : l);
+          setLayers(currentLayers);
+          await new Promise(r => setTimeout(r, 50));
+        }
+
+        for (let j = 0; j < strokes.length; j++) {
+          if (signal.aborted) return;
+          currentLayers = currentLayers.map(l => l.id === originalLayer.id ? { ...l, strokes: [...l.strokes, strokes[j]], updatedAt: Date.now() } : l);
+          setLayers(currentLayers);
+          await new Promise(r => setTimeout(r, 20));
+        }
+      }
+    } finally {
+      setIsPlayingTimelapse(false);
+    }
+  };
 
   useEffect(() => {
     const loadAutosave = async () => {
@@ -47,6 +102,9 @@ function App() {
             setActiveLayerId(autosave.layers[0].id);
           }
           if (autosave.gridSpacing) setGridSpacing(autosave.gridSpacing);
+          if (autosave.canvasWidth) setCanvasWidth(autosave.canvasWidth);
+          if (autosave.canvasHeight) setCanvasHeight(autosave.canvasHeight);
+          if (autosave.centerPoint) setCenterPoint(autosave.centerPoint);
         }
       } catch (e) {
         console.error("Failed to load autosave", e);
@@ -56,29 +114,42 @@ function App() {
     loadAutosave();
   }, []);
 
+  const autosaveTimeout = useRef(null);
+
   useEffect(() => {
-    if (!isLoaded) return;
-    const saveData = { layers, gridSpacing };
-    localforage.setItem('artWorldAutosave', saveData).catch(e => console.error("Autosave failed", e));
-  }, [layers, gridSpacing, isLoaded]);
+    if (!isLoaded || isPlayingTimelapse) return;
+    
+    if (autosaveTimeout.current) clearTimeout(autosaveTimeout.current);
+    
+    autosaveTimeout.current = setTimeout(() => {
+      const saveData = { layers, gridSpacing, canvasWidth, canvasHeight, centerPoint };
+      localforage.setItem('artWorldAutosave', saveData).catch(e => console.error("Autosave failed", e));
+    }, 1000); // 1s debounce
+    
+    return () => clearTimeout(autosaveTimeout.current);
+  }, [layers, gridSpacing, canvasWidth, canvasHeight, centerPoint, isLoaded, isPlayingTimelapse]);
   
   const [history, setHistory] = useState([]);
   const [redoHistory, setRedoHistory] = useState([]);
 
-  const handleAddLine = (newLines) => {
+  const handleAddStrokes = (newStrokes) => {
     setHistory(prev => [...prev.slice(-20), layers]); // Keep last 20 actions
     setRedoHistory([]); // Clear redo on new action
     
     setLayers(prevLayers => prevLayers.map(layer => {
       if (layer.id === activeLayerId) {
-        return { ...layer, lines: [...layer.lines, ...newLines] };
+        return { 
+          ...layer, 
+          strokes: [...(layer.strokes || []), ...newStrokes],
+          updatedAt: Date.now()
+        };
       }
       return layer;
     }));
   };
 
-  const handleEraseLines = (linesToRemove) => {
-    if (linesToRemove.length === 0) return;
+  const handleEraseElements = (linesToRemove, strokesToRemove) => {
+    if (linesToRemove.length === 0 && strokesToRemove.length === 0) return;
     setHistory(prev => [...prev.slice(-20), layers]);
     setRedoHistory([]);
     
@@ -86,7 +157,9 @@ function App() {
       if (layer.id === activeLayerId) {
         return { 
           ...layer, 
-          lines: layer.lines.filter(l => !linesToRemove.includes(l)) 
+          lines: layer.lines ? layer.lines.filter(l => !linesToRemove.includes(l)) : [],
+          strokes: layer.strokes ? layer.strokes.filter(s => !strokesToRemove.includes(s)) : [],
+          updatedAt: Date.now()
         };
       }
       return layer;
@@ -135,26 +208,65 @@ function App() {
   const clearLayer = (id) => {
     setHistory(prev => [...prev.slice(-20), layers]);
     setRedoHistory([]);
-    setLayers(prev => prev.map(l => l.id === id ? { ...l, lines: [] } : l));
+    setLayers(prev => prev.map(l => l.id === id ? { ...l, lines: [], strokes: [], updatedAt: Date.now() } : l));
+  };
+
+  const duplicateLayer = (id) => {
+    setHistory(prev => [...prev.slice(-20), layers]);
+    setRedoHistory([]);
+    setLayers(prev => {
+      const idx = prev.findIndex(l => l.id === id);
+      if (idx === -1) return prev;
+      const layerToCopy = prev[idx];
+      const newLayer = {
+        ...layerToCopy,
+        id: generateId(),
+        name: `${layerToCopy.name} Copy`,
+        lines: [...(layerToCopy.lines || [])],
+        strokes: [...(layerToCopy.strokes || [])],
+        updatedAt: Date.now()
+      };
+      const newLayers = [...prev];
+      newLayers.splice(idx, 0, newLayer); // Insert above
+      setActiveLayerId(newLayer.id);
+      return newLayers;
+    });
+  };
+
+  const mergeDown = (id) => {
+    setHistory(prev => [...prev.slice(-20), layers]);
+    setRedoHistory([]);
+    setLayers(prev => {
+      const idx = prev.findIndex(l => l.id === id);
+      if (idx === -1 || idx === prev.length - 1) return prev; // Cannot merge down if last
+      
+      const topLayer = prev[idx];
+      const bottomLayer = prev[idx + 1];
+      
+      const mergedLayer = {
+        ...bottomLayer,
+        lines: [...(bottomLayer.lines || []), ...(topLayer.lines || [])],
+        strokes: [...(bottomLayer.strokes || []), ...(topLayer.strokes || [])],
+        updatedAt: Date.now()
+      };
+      
+      const newLayers = [...prev];
+      newLayers[idx + 1] = mergedLayer; // Update bottom layer
+      newLayers.splice(idx, 1); // Remove top layer
+      
+      if (activeLayerId === id) {
+        setActiveLayerId(mergedLayer.id);
+      }
+      return newLayers;
+    });
   };
 
   // Export functionality
   const canvasRef = useRef(null);
   
   const exportImage = async () => {
-    const canvas = document.querySelector('canvas');
-    if (!canvas) return;
-    
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext('2d');
-    
-    ctx.fillStyle = '#121212';
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(canvas, 0, 0);
-    
-    const dataUrl = exportCanvas.toDataURL('image/png');
+    if (!canvasRef.current || !canvasRef.current.exportHighRes) return;
+    const dataUrl = canvasRef.current.exportHighRes();
     const fileName = `art-world-${Date.now()}.png`;
 
     if (Capacitor.isNativePlatform()) {
@@ -188,35 +300,70 @@ function App() {
 
     layers.forEach(layer => {
       if (!layer.visible) return;
-      layer.lines.forEach(line => {
-        if (!hasPoints) {
-          minX = maxX = line.start.x;
-          minY = maxY = line.start.y;
-          hasPoints = true;
-        }
-        minX = Math.min(minX, line.start.x, line.end.x);
-        maxX = Math.max(maxX, line.start.x, line.end.x);
-        minY = Math.min(minY, line.start.y, line.end.y);
-        maxY = Math.max(maxY, line.start.y, line.end.y);
-      });
+      if (layer.lines) {
+        layer.lines.forEach(line => {
+          if (!hasPoints) {
+            minX = maxX = line.start.x;
+            minY = maxY = line.start.y;
+            hasPoints = true;
+          }
+          minX = Math.min(minX, line.start.x, line.end.x);
+          maxX = Math.max(maxX, line.start.x, line.end.x);
+          minY = Math.min(minY, line.start.y, line.end.y);
+          maxY = Math.max(maxY, line.start.y, line.end.y);
+        });
+      }
+      if (layer.strokes) {
+        layer.strokes.forEach(stroke => {
+          stroke.points.forEach(pt => {
+            if (!hasPoints) {
+              minX = maxX = pt.x;
+              minY = maxY = pt.y;
+              hasPoints = true;
+            }
+            minX = Math.min(minX, pt.x);
+            maxX = Math.max(maxX, pt.x);
+            minY = Math.min(minY, pt.y);
+            maxY = Math.max(maxY, pt.y);
+          });
+        });
+      }
     });
 
-    const padding = 50;
-    minX -= padding; minY -= padding;
-    maxX += padding; maxY += padding;
-    const width = hasPoints ? maxX - minX : 1000;
-    const height = hasPoints ? maxY - minY : 1000;
+    // For finite canvas, we should ideally use the fixed bounds!
+    // For finite canvas, we should ideally use the fixed bounds!
+    // Let's use the explicit canvasWidth and canvasHeight for the SVG.
+    const width = canvasWidth;
+    const height = canvasHeight;
 
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}">`;
-    svgContent += `<rect width="100%" height="100%" fill="#1a1a2e" x="${minX}" y="${minY}" />`;
+    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
+    svgContent += `<rect width="100%" height="100%" fill="#1a1a2e" x="0" y="0" />`;
     
     layers.forEach(layer => {
       if (!layer.visible) return;
-      svgContent += `<g stroke="${layer.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="${layer.opacity}">`;
-      layer.lines.forEach(line => {
-         svgContent += `<line x1="${line.start.x}" y1="${line.start.y}" x2="${line.end.x}" y2="${line.end.y}" />`;
-      });
-      svgContent += `</g>`;
+      
+      // Draw legacy lines
+      if (layer.lines && layer.lines.length > 0) {
+        svgContent += `<g stroke="${layer.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="${layer.opacity}">`;
+        layer.lines.forEach(line => {
+           svgContent += `<line x1="${line.start.x}" y1="${line.start.y}" x2="${line.end.x}" y2="${line.end.y}" />`;
+        });
+        svgContent += `</g>`;
+      }
+
+      // Draw modern strokes
+      if (layer.strokes && layer.strokes.length > 0) {
+        layer.strokes.forEach(stroke => {
+          svgContent += `<path d="`;
+          if (stroke.points.length > 0) {
+            svgContent += `M ${stroke.points[0].x} ${stroke.points[0].y} `;
+            for (let i = 1; i < stroke.points.length; i++) {
+              svgContent += `L ${stroke.points[i].x} ${stroke.points[i].y} `;
+            }
+          }
+          svgContent += `" stroke="${layer.color}" stroke-width="${stroke.size || 2}" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="${layer.opacity}" />`;
+        });
+      }
     });
     
     svgContent += `</svg>`;
@@ -256,6 +403,8 @@ function App() {
       symmetry,
       centerPoint,
       gridSpacing,
+      canvasWidth,
+      canvasHeight,
       version: 1
     };
     const jsonString = JSON.stringify(projectData);
@@ -301,9 +450,11 @@ function App() {
         if (data.symmetry) setSymmetry(data.symmetry);
         if (data.centerPoint) setCenterPoint(data.centerPoint);
         if (data.gridSpacing) setGridSpacing(data.gridSpacing);
-        if (data.layers.length > 0) setActiveLayerId(data.layers[0].id);
+        if (data.canvasWidth) setCanvasWidth(data.canvasWidth);
+        if (data.canvasHeight) setCanvasHeight(data.canvasHeight);
+        if (data.layers && data.layers.length > 0) setActiveLayerId(data.layers[0].id);
         setHistory([]);
-      } catch (err) {
+      } catch (e) {
         alert("Failed to load project file.");
       }
     };
@@ -318,7 +469,7 @@ function App() {
         id: generateId(),
         name,
         date: new Date().toISOString(),
-        data: { layers, gridSpacing }
+        data: { layers, gridSpacing, canvasWidth, canvasHeight, centerPoint }
       };
       await localforage.setItem('artWorldProjects', [newProject, ...saved]);
     } catch (e) {
@@ -329,11 +480,18 @@ function App() {
 
   const handleLoadFromGallery = (project) => {
     setLayers(project.data.layers);
-    setGridSpacing(project.data.gridSpacing);
+    if (project.data.gridSpacing) setGridSpacing(project.data.gridSpacing);
+    if (project.data.canvasWidth) setCanvasWidth(project.data.canvasWidth);
+    if (project.data.canvasHeight) setCanvasHeight(project.data.canvasHeight);
+    if (project.data.centerPoint) setCenterPoint(project.data.centerPoint);
     setHistory([]);
     setRedoHistory([]);
     setIsGalleryOpen(false);
   };
+
+  if (currentRoute === 'home') {
+    return <Home onStart={() => setCurrentRoute('editor')} />;
+  }
 
   return (
     <div className="app-container">
@@ -354,6 +512,13 @@ function App() {
           openGallery={() => setIsGalleryOpen(true)}
           gridSpacing={gridSpacing}
           setGridSpacing={setGridSpacing}
+          canvasWidth={canvasWidth}
+          setCanvasWidth={setCanvasWidth}
+          canvasHeight={canvasHeight}
+          setCanvasHeight={setCanvasHeight}
+          brushSize={brushSize}
+          setBrushSize={setBrushSize}
+          playTimelapse={playTimelapse}
         />
       </DraggablePanel>
       <button 
@@ -385,18 +550,30 @@ function App() {
           ref={canvasRef}
           layers={layers}
           activeLayerId={activeLayerId}
+          updateLayer={updateLayer}
           tool={tool}
+          setTool={setTool}
           symmetry={symmetry}
           drawMode={drawMode}
           snapToGrid={snapToGrid}
           centerPoint={centerPoint}
           setCenterPoint={setCenterPoint}
           gridSpacing={gridSpacing}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
+          brushSize={brushSize}
           handleUndo={handleUndo}
           canUndo={history.length > 0}
-          onAddLine={handleAddLine}
-          onEraseLines={handleEraseLines}
+          onAddStrokes={handleAddStrokes}
+          onEraseElements={handleEraseElements}
         />
+        {isPlayingTimelapse && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '20px', pointerEvents: 'none' }}>
+            <div style={{ background: 'rgba(0,0,0,0.7)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '18px', fontWeight: 'bold' }}>
+              Playing Timelapse...
+            </div>
+          </div>
+        )}
       </div>
 
       <DraggablePanel title="Layers" defaultPosition={{ x: window.innerWidth > 800 ? window.innerWidth - 360 : 20, y: 20 }}>
@@ -408,6 +585,8 @@ function App() {
           addLayer={addLayer}
           deleteLayer={deleteLayer}
           clearLayer={clearLayer}
+          duplicateLayer={duplicateLayer}
+          mergeDown={mergeDown}
         />
       </DraggablePanel>
 

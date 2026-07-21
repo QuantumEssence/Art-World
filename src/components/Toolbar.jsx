@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Upload, Undo2, Redo2, MousePointer2, Move, Crosshair, Grid, Eraser, Magnet, FolderOpen } from 'lucide-react';
+import { Download, Upload, Undo2, Redo2, MousePointer2, Move, Crosshair, Grid, Eraser, Magnet, FolderOpen, Pipette, Minus, Circle, Scissors, PlayCircle } from 'lucide-react';
 
 const Toolbar = ({ 
   tool, setTool, 
@@ -10,7 +10,10 @@ const Toolbar = ({
   handleRedo, canRedo,
   exportImage, exportSVG,
   saveProject, loadProject, openGallery,
-  gridSpacing, setGridSpacing
+  gridSpacing, setGridSpacing,
+  canvasHeight, setCanvasHeight,
+  brushSize, setBrushSize,
+  playTimelapse
 }) => {
   return (
     <div className="tool-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -44,6 +47,43 @@ const Toolbar = ({
             title="Set Symmetry Center"
           >
             <Crosshair size={18} /> Center
+          </button>
+          <button 
+            className={tool === 'eyedropper' ? 'active' : ''} 
+            onClick={() => setTool('eyedropper')}
+            title="Eyedropper"
+          >
+            <Pipette size={18} /> Color
+          </button>
+          <button 
+            className={tool === 'lasso' ? 'active' : ''} 
+            onClick={() => setTool('lasso')}
+            title="Lasso Selection"
+          >
+            <Scissors size={18} /> Lasso
+          </button>
+        </div>
+        <div className="button-row" style={{ marginTop: '8px' }}>
+          <button 
+            className={tool === 'line' ? 'active' : ''} 
+            onClick={() => setTool('line')}
+            title="Line"
+          >
+            <Minus size={18} /> Line
+          </button>
+          <button 
+            className={tool === 'circle' ? 'active' : ''} 
+            onClick={() => setTool('circle')}
+            title="Perfect Circle"
+          >
+            <Circle size={18} /> Circle
+          </button>
+          <button 
+            className={tool === 'ellipse' ? 'active' : ''} 
+            onClick={() => setTool('ellipse')}
+            title="Ellipse"
+          >
+            <Circle size={18} style={{ transform: 'scaleX(1.5)' }} /> Ellipse
           </button>
         </div>
       </div>
@@ -118,6 +158,44 @@ const Toolbar = ({
       </div>
 
       <div className="tool-group">
+        <h3>Brush Size</h3>
+        <div className="button-row" style={{ alignItems: 'center' }}>
+          <span style={{ fontSize: '12px', minWidth: '20px' }}>{brushSize}</span>
+          <input 
+            type="range" 
+            min="1" max="50" 
+            value={brushSize}
+            onChange={(e) => setBrushSize(Number(e.target.value))}
+            style={{ width: '100px' }}
+          />
+        </div>
+      </div>
+
+      <div className="tool-group">
+        <h3>Canvas Settings</h3>
+        <div className="button-row" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', width: '40px' }}>Width:</span>
+            <input 
+              type="number" 
+              value={canvasWidth}
+              onChange={(e) => setCanvasWidth(Number(e.target.value))}
+              style={{ width: '80px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '4px', borderRadius: '4px' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', width: '40px' }}>Height:</span>
+            <input 
+              type="number" 
+              value={canvasHeight}
+              onChange={(e) => setCanvasHeight(Number(e.target.value))}
+              style={{ width: '80px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '4px', borderRadius: '4px' }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="tool-group">
         <h3>Actions</h3>
         <div className="button-row">
           <button onClick={handleUndo} disabled={!canUndo} style={{ opacity: canUndo ? 1 : 0.5 }}>
@@ -125,6 +203,9 @@ const Toolbar = ({
           </button>
           <button onClick={handleRedo} disabled={!canRedo} style={{ opacity: canRedo ? 1 : 0.5 }}>
             <Redo2 size={18} /> Redo
+          </button>
+          <button onClick={playTimelapse}>
+            <PlayCircle size={18} /> Timelapse
           </button>
         </div>
       </div>

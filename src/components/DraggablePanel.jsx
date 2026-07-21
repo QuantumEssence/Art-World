@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Minus, Square, GripHorizontal } from 'lucide-react';
 
-const DraggablePanel = ({ title, defaultPosition, children, className = '' }) => {
+const DraggablePanel = ({ title, defaultPosition, children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [position, setPosition] = useState(defaultPosition || { x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);

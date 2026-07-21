@@ -2,12 +2,14 @@ import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } f
 import { ZoomIn, ZoomOut, Maximize, Undo2 } from 'lucide-react';
 
 const DrawingCanvas = forwardRef(({ 
-  layers, activeLayerId, tool, symmetry, centerPoint, setCenterPoint, 
-  drawMode, snapToGrid, gridSpacing, handleUndo, canUndo, onAddLine, onEraseLines 
+  layers, activeLayerId, updateLayer, tool, setTool, symmetry, centerPoint, setCenterPoint, 
+  drawMode, snapToGrid, gridSpacing, canvasWidth, canvasHeight, brushSize,
+  handleUndo, canUndo, onAddStrokes, onEraseElements 
 }, ref) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [ctx, setCtx] = useState(null);
+  const layerCache = useRef(new Map());
   
   // Viewport transform
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -16,15 +18,84 @@ const DrawingCanvas = forwardRef(({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [currentLineStart, setCurrentLineStart] = useState(null);
-  const [currentStroke, setCurrentStroke] = useState([]);
+  const [currentStrokePoints, setCurrentStrokePoints] = useState([]);
   const [isErasing, setIsErasing] = useState(false);
   const [mousePos, setMousePos] = useState(null);
+  const [windowSize, setWindowSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+
+  // Transform / Lasso state
+  const [transformStrokes, setTransformStrokes] = useState(null);
+  const [transformOffset, setTransformOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingTransform, setIsDraggingTransform] = useState(false);
 
   // Multi-touch state
   const activePointers = useRef(new Map());
   const pinchState = useRef(null);
 
-  useImperativeHandle(ref, () => canvasRef.current);
+  useImperativeHandle(ref, () => ({
+    getCanvas: () => canvasRef.current,
+    exportHighRes: () => {
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = canvasWidth;
+      exportCanvas.height = canvasHeight;
+      const eCtx = exportCanvas.getContext('2d');
+      
+      // Draw background
+      eCtx.fillStyle = '#1a1a2e';
+      eCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+      
+      // Draw layers
+      layers.forEach(layer => {
+        if (!layer.visible) return;
+        
+        eCtx.save();
+        eCtx.globalAlpha = layer.opacity;
+        eCtx.globalCompositeOperation = layer.blendMode || 'source-over';
+        
+        // Use cached canvas if available, otherwise draw directly
+        const cache = layerCache.current.get(layer.id);
+        if (cache && cache.canvas) {
+          eCtx.drawImage(cache.canvas, 0, 0);
+        } else {
+          eCtx.strokeStyle = layer.color;
+          eCtx.lineCap = 'round';
+          eCtx.lineJoin = 'round';
+          
+          if (layer.glow > 0) {
+            eCtx.shadowBlur = layer.glow;
+            eCtx.shadowColor = layer.color;
+          }
+          
+          if (layer.lines && layer.lines.length > 0) {
+            eCtx.lineWidth = 2;
+            eCtx.beginPath();
+            layer.lines.forEach(line => {
+              eCtx.moveTo(line.start.x, line.start.y);
+              eCtx.lineTo(line.end.x, line.end.y);
+            });
+            eCtx.stroke();
+          }
+
+          if (layer.strokes && layer.strokes.length > 0) {
+            layer.strokes.forEach(stroke => {
+              eCtx.lineWidth = stroke.size || 2;
+              eCtx.beginPath();
+              if (stroke.points.length > 0) {
+                eCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+                for (let i = 1; i < stroke.points.length; i++) {
+                  eCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+                }
+              }
+              eCtx.stroke();
+            });
+          }
+        }
+        eCtx.restore();
+      });
+      
+      return exportCanvas.toDataURL('image/png');
+    }
+  }));
 
   // Initialize canvas
   useEffect(() => {
@@ -33,34 +104,129 @@ const DrawingCanvas = forwardRef(({
     setCtx(context);
     
     const handleResize = () => {
-      if (containerRef.current) {
-        canvas.width = containerRef.current.clientWidth;
-        canvas.height = containerRef.current.clientHeight;
-        draw();
-      }
+      setWindowSize({ w: window.innerWidth, h: window.innerHeight });
     };
     
     window.addEventListener('resize', handleResize);
-    handleResize();
     
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Commit transform when tool changes from lasso
+  useEffect(() => {
+    if (tool !== 'lasso' && transformStrokes) {
+      const transformedStrokes = transformStrokes.map(stroke => ({
+        ...stroke,
+        points: stroke.points.map(p => ({
+          x: p.x + transformOffset.x,
+          y: p.y + transformOffset.y
+        }))
+      }));
+      onAddStrokes(transformedStrokes);
+      setTransformStrokes(null);
+      setTransformOffset({ x: 0, y: 0 });
+    }
+  }, [tool, transformStrokes, transformOffset, onAddStrokes]);
+
+  // Update layer cache
+  const updateLayerCache = (layer) => {
+    let cache = layerCache.current.get(layer.id);
+    
+    // Check if we need to recreate the cache canvas (size change or missing)
+    if (!cache || cache.width !== canvasWidth || cache.height !== canvasHeight) {
+      const c = document.createElement('canvas');
+      c.width = canvasWidth;
+      c.height = canvasHeight;
+      cache = { canvas: c, updatedAt: 0, width: canvasWidth, height: canvasHeight };
+      layerCache.current.set(layer.id, cache);
+    }
+    
+    // Check if layer content has changed
+    if (cache.updatedAt !== layer.updatedAt) {
+      const cCtx = cache.canvas.getContext('2d');
+      cCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+      
+      cCtx.strokeStyle = layer.color;
+      cCtx.lineCap = 'round';
+      cCtx.lineJoin = 'round';
+      
+      if (layer.glow > 0) {
+        cCtx.shadowBlur = layer.glow;
+        cCtx.shadowColor = layer.color;
+      }
+      
+      // Legacy Lines
+      if (layer.lines && layer.lines.length > 0) {
+        cCtx.lineWidth = 2;
+        cCtx.beginPath();
+        layer.lines.forEach(line => {
+          cCtx.moveTo(line.start.x, line.start.y);
+          cCtx.lineTo(line.end.x, line.end.y);
+        });
+        cCtx.stroke();
+      }
+
+      // Modern Strokes
+      if (layer.strokes && layer.strokes.length > 0) {
+        layer.strokes.forEach(stroke => {
+          cCtx.lineWidth = stroke.size || 2;
+          cCtx.beginPath();
+          if (stroke.points.length > 0) {
+            cCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+              cCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+          }
+          cCtx.stroke();
+        });
+      }
+      
+      cache.updatedAt = layer.updatedAt;
+    }
+    
+    return cache.canvas;
+  };
 
   // Main draw loop
   const draw = () => {
     if (!ctx || !canvasRef.current) return;
     const canvas = canvasRef.current;
     
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== containerRef.current.clientWidth * dpr || canvas.height !== containerRef.current.clientHeight * dpr) {
+      canvas.width = containerRef.current.clientWidth * dpr;
+      canvas.height = containerRef.current.clientHeight * dpr;
+    }
+
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // Clean up layer cache for deleted layers
+    const layerIds = new Set(layers.map(l => l.id));
+    for (const id of layerCache.current.keys()) {
+      if (!layerIds.has(id)) {
+        layerCache.current.delete(id);
+      }
+    }
+    
     // Setup transform
     ctx.save();
+    ctx.scale(dpr, dpr);
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.scale, transform.scale);
     
-    // Draw Grid (infinite background)
+    // Draw Finite Canvas Bounds (Border)
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1 / transform.scale;
+    ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Draw Grid (clipped to finite canvas)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, canvasWidth, canvasHeight);
+    ctx.clip();
     drawGrid(ctx, canvas, transform);
+    ctx.restore();
     
     // Draw Center Point if active
     if (symmetry !== 'none' || tool === 'center') {
@@ -71,24 +237,12 @@ const DrawingCanvas = forwardRef(({
     layers.forEach(layer => {
       if (!layer.visible) return;
       
+      const cachedCanvas = updateLayerCache(layer);
+      
       ctx.save();
       ctx.globalAlpha = layer.opacity;
-      ctx.strokeStyle = layer.color;
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
-      if (layer.glow > 0) {
-        ctx.shadowBlur = layer.glow;
-        ctx.shadowColor = layer.color;
-      }
-      
-      ctx.beginPath();
-      layer.lines.forEach(line => {
-        ctx.moveTo(line.start.x, line.start.y);
-        ctx.lineTo(line.end.x, line.end.y);
-      });
-      ctx.stroke();
+      ctx.globalCompositeOperation = layer.blendMode || 'source-over';
+      ctx.drawImage(cachedCanvas, 0, 0);
       ctx.restore();
     });
 
@@ -99,29 +253,101 @@ const DrawingCanvas = forwardRef(({
         ctx.save();
         ctx.globalAlpha = activeLayer.opacity * 0.7;
         ctx.strokeStyle = activeLayer.color;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = brushSize;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         
-        ctx.beginPath();
-        
-        // Draw continuous stroke
-        if (currentStroke.length > 0) {
-          currentStroke.forEach(line => {
-            ctx.moveTo(line.start.x, line.start.y);
-            ctx.lineTo(line.end.x, line.end.y);
+        // Draw continuous stroke actively
+        if (currentStrokePoints.length > 0 && tool === 'draw') {
+          const symStrokes = getSymmetricStrokes(currentStrokePoints, brushSize);
+          symStrokes.forEach(stroke => {
+            ctx.beginPath();
+            ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+              ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+            ctx.stroke();
           });
         }
         
-        // Draw segment preview
-        if (currentLineStart && mousePos && drawMode === 'segment') {
+        // Draw segment preview and shape previews
+        if (currentLineStart && mousePos) {
           const endPoint = snapToGridPoint(mousePos);
-          const linesToDraw = getSymmetricLines(currentLineStart, endPoint);
-          linesToDraw.forEach(line => {
-            ctx.moveTo(line.start.x, line.start.y);
-            ctx.lineTo(line.end.x, line.end.y);
-          });
+          let points = [];
+          
+          if (tool === 'draw' && drawMode === 'segment') {
+            points = [currentLineStart, endPoint];
+          } else if (tool === 'line') {
+            points = [currentLineStart, endPoint];
+          } else if (tool === 'circle') {
+            const radius = Math.hypot(endPoint.x - currentLineStart.x, endPoint.y - currentLineStart.y);
+            points = generateCircleStrokes(currentLineStart, radius);
+          } else if (tool === 'ellipse') {
+            points = generateEllipseStrokes(currentLineStart, endPoint);
+          }
+          
+          if (points.length > 0) {
+            const symStrokes = getSymmetricStrokes(points, brushSize);
+            symStrokes.forEach(stroke => {
+              ctx.beginPath();
+              ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+              for (let i = 1; i < stroke.points.length; i++) {
+                ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+              }
+              ctx.stroke();
+            });
+          }
         }
         
-        ctx.stroke();
+        // Draw lasso polygon preview
+        if (tool === 'lasso' && !transformStrokes && currentStrokePoints.length > 0) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.setLineDash([5 / transform.scale, 5 / transform.scale]);
+          ctx.lineWidth = 1 / transform.scale;
+          ctx.beginPath();
+          ctx.moveTo(currentStrokePoints[0].x, currentStrokePoints[0].y);
+          for (let i = 1; i < currentStrokePoints.length; i++) {
+            ctx.lineTo(currentStrokePoints[i].x, currentStrokePoints[i].y);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Draw transformed strokes & bounding box
+        if (transformStrokes) {
+          ctx.save();
+          ctx.translate(transformOffset.x, transformOffset.y);
+          
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+          transformStrokes.forEach(stroke => {
+            ctx.lineWidth = stroke.size || 2;
+            ctx.strokeStyle = '#38bdf8'; // Highlight color
+            ctx.beginPath();
+            if (stroke.points.length > 0) {
+              ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+              stroke.points.forEach(p => {
+                ctx.lineTo(p.x, p.y);
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
+              });
+            }
+            ctx.stroke();
+          });
+
+          if (minX !== Infinity) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2 / transform.scale;
+            ctx.setLineDash([5 / transform.scale, 5 / transform.scale]);
+            ctx.strokeRect(minX - 5, minY - 5, (maxX - minX) + 10, (maxY - minY) + 10);
+            ctx.setLineDash([]);
+          }
+
+          ctx.restore();
+        }
+        
         ctx.restore();
       }
     }
@@ -140,14 +366,20 @@ const DrawingCanvas = forwardRef(({
 
   useEffect(() => {
     draw();
-  }, [layers, transform, mousePos, currentLineStart, currentStroke, symmetry, centerPoint, tool, activeLayerId]);
+  }, [layers, transform, mousePos, currentLineStart, currentStrokePoints, symmetry, centerPoint, tool, activeLayerId, canvasWidth, canvasHeight, brushSize, transformStrokes, transformOffset, drawMode, snapToGrid, gridSpacing, windowSize]);
 
   const drawGrid = (ctx, canvas, transform) => {
     // Calculate visible bounds in world coordinates
-    const startX = (-transform.x) / transform.scale;
-    const startY = (-transform.y) / transform.scale;
-    const endX = (canvas.width - transform.x) / transform.scale;
-    const endY = (canvas.height - transform.y) / transform.scale;
+    let startX = (-transform.x) / transform.scale;
+    let startY = (-transform.y) / transform.scale;
+    let endX = (canvas.width - transform.x) / transform.scale;
+    let endY = (canvas.height - transform.y) / transform.scale;
+
+    // Clamp to finite canvas bounds
+    startX = Math.max(0, startX);
+    startY = Math.max(0, startY);
+    endX = Math.min(canvasWidth, endX);
+    endY = Math.min(canvasHeight, endY);
 
     const snapStartX = Math.floor(startX / gridSpacing) * gridSpacing;
     const snapStartY = Math.floor(startY / gridSpacing) * gridSpacing;
@@ -175,48 +407,76 @@ const DrawingCanvas = forwardRef(({
     ctx.setLineDash([]);
   };
 
-  const getSymmetricLines = (start, end) => {
-    const lines = [{ start, end }];
+  const getSymmetricStrokes = (points, size) => {
+    const strokes = [{ points: [...points], size }];
     const { x: cx, y: cy } = centerPoint;
 
     if (symmetry === '2-way' || symmetry === '4-way') {
       // Horizontal reflection (left/right)
-      lines.push({
-        start: { x: 2 * cx - start.x, y: start.y },
-        end: { x: 2 * cx - end.x, y: end.y }
+      strokes.push({
+        points: points.map(p => ({ x: 2 * cx - p.x, y: p.y })),
+        size
       });
     }
     
     if (symmetry === '4-way') {
       // Vertical reflection (top/bottom)
-      lines.push({
-        start: { x: start.x, y: 2 * cy - start.y },
-        end: { x: end.x, y: 2 * cy - end.y }
+      strokes.push({
+        points: points.map(p => ({ x: p.x, y: 2 * cy - p.y })),
+        size
       });
       // Both (diagonal)
-      lines.push({
-        start: { x: 2 * cx - start.x, y: 2 * cy - start.y },
-        end: { x: 2 * cx - end.x, y: 2 * cy - end.y }
+      strokes.push({
+        points: points.map(p => ({ x: 2 * cx - p.x, y: 2 * cy - p.y })),
+        size
       });
     }
 
-    // Deduplicate lines (if drawing exactly on the mirror axis)
-    const uniqueLines = [];
-    const seen = new Set();
-    lines.forEach(line => {
-      // Normalize line direction for deduplication
-      const sx = Math.min(line.start.x, line.end.x);
-      const sy = Math.min(line.start.y, line.end.y);
-      const ex = Math.max(line.start.x, line.end.x);
-      const ey = Math.max(line.start.y, line.end.y);
-      const key = `${sx},${sy}-${ex},${ey}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        uniqueLines.push(line);
-      }
-    });
+    return strokes;
+  };
 
-    return uniqueLines;
+  const generateCircleStrokes = (center, radius, pointsCount = 64) => {
+    const points = [];
+    for (let i = 0; i <= pointsCount; i++) {
+      const angle = (i / pointsCount) * Math.PI * 2;
+      points.push({
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius
+      });
+    }
+    return points;
+  };
+
+  const generateEllipseStrokes = (p1, p2, pointsCount = 64) => {
+    const points = [];
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    const rx = Math.abs(p1.x - p2.x) / 2;
+    const ry = Math.abs(p1.y - p2.y) / 2;
+    
+    for (let i = 0; i <= pointsCount; i++) {
+      const angle = (i / pointsCount) * Math.PI * 2;
+      points.push({
+        x: cx + Math.cos(angle) * rx,
+        y: cy + Math.sin(angle) * ry
+      });
+    }
+    return points;
+  };
+
+  const rgbToHex = (r, g, b) => {
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  };
+
+  const pointInPolygon = (point, polygon) => {
+    let isInside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x, yi = polygon[i].y;
+      const xj = polygon[j].x, yj = polygon[j].y;
+      const intersect = ((yi > point.y) !== (yj > point.y)) && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+      if (intersect) isInside = !isInside;
+    }
+    return isInside;
   };
 
   // Utilities
@@ -260,16 +520,31 @@ const DrawingCanvas = forwardRef(({
     // Eraser radius in world coordinates
     const eraseRadiusSq = (10 / transform.scale) ** 2;
     const linesToRemove = [];
+    const strokesToRemove = [];
     
-    activeLayer.lines.forEach(line => {
-      const distSq = distToSegmentSquared(worldPos, line.start, line.end);
-      if (distSq < eraseRadiusSq) {
-        linesToRemove.push(line);
-      }
-    });
+    if (activeLayer.lines) {
+      activeLayer.lines.forEach(line => {
+        const distSq = distToSegmentSquared(worldPos, line.start, line.end);
+        if (distSq < eraseRadiusSq) {
+          linesToRemove.push(line);
+        }
+      });
+    }
+
+    if (activeLayer.strokes) {
+      activeLayer.strokes.forEach(stroke => {
+        for (let i = 0; i < stroke.points.length - 1; i++) {
+          const distSq = distToSegmentSquared(worldPos, stroke.points[i], stroke.points[i+1]);
+          if (distSq < eraseRadiusSq) {
+            strokesToRemove.push(stroke);
+            break; // Remove entire stroke if any part is erased
+          }
+        }
+      });
+    }
     
-    if (linesToRemove.length > 0) {
-      onEraseLines(linesToRemove);
+    if (linesToRemove.length > 0 || strokesToRemove.length > 0) {
+      onEraseElements(linesToRemove, strokesToRemove);
     }
   };
 
@@ -309,12 +584,22 @@ const DrawingCanvas = forwardRef(({
 
     if (tool === 'center') {
       setCenterPoint(snapped);
-    } else if (tool === 'draw') {
+    } else if (['draw', 'line', 'circle', 'ellipse'].includes(tool)) {
       setCurrentLineStart(snapped);
-      setCurrentStroke([]);
+      if (tool === 'draw') setCurrentStrokePoints([snapped]);
+    } else if (tool === 'lasso') {
+      if (transformStrokes) {
+        setIsDraggingTransform(true);
+        setDragStart({ x: worldPos.x - transformOffset.x, y: worldPos.y - transformOffset.y });
+      } else {
+        setCurrentLineStart(snapped);
+        setCurrentStrokePoints([snapped]);
+      }
     } else if (tool === 'erase') {
       setIsErasing(true);
       performErase(worldPos);
+    } else if (tool === 'eyedropper') {
+      // Handled in pointerUp
     }
   };
 
@@ -366,9 +651,17 @@ const DrawingCanvas = forwardRef(({
       if (tool === 'draw' && currentLineStart && drawMode === 'continuous') {
         const endPoint = snapToGridPoint(worldPos);
         if (currentLineStart.x !== endPoint.x || currentLineStart.y !== endPoint.y) {
-          const newLines = getSymmetricLines(currentLineStart, endPoint);
-          setCurrentStroke(prev => [...prev, ...newLines]);
+          setCurrentStrokePoints(prev => [...prev, endPoint]);
           setCurrentLineStart(endPoint);
+        }
+      } else if (tool === 'lasso') {
+        if (transformStrokes && isDraggingTransform) {
+          setTransformOffset({
+            x: worldPos.x - dragStart.x,
+            y: worldPos.y - dragStart.y
+          });
+        } else if (!transformStrokes && currentLineStart) {
+          setCurrentStrokePoints(prev => [...prev, worldPos]);
         }
       } else if (tool === 'erase' && isErasing) {
         performErase(worldPos);
@@ -392,19 +685,91 @@ const DrawingCanvas = forwardRef(({
     if (tool === 'draw') {
       if (drawMode === 'segment' && currentLineStart && mousePos) {
         const endPoint = snapToGridPoint(mousePos);
-        
         if (currentLineStart.x !== endPoint.x || currentLineStart.y !== endPoint.y) {
-          const newLines = getSymmetricLines(currentLineStart, endPoint);
-          onAddLine(newLines);
+          const points = [currentLineStart, endPoint];
+          onAddStrokes(getSymmetricStrokes(points, brushSize));
         }
-      } else if (drawMode === 'continuous' && currentStroke.length > 0) {
-        onAddLine(currentStroke);
+      } else if (drawMode === 'continuous' && currentStrokePoints.length > 1) {
+        onAddStrokes(getSymmetricStrokes(currentStrokePoints, brushSize));
       }
-      
       setCurrentLineStart(null);
-      setCurrentStroke([]);
+      setCurrentStrokePoints([]);
+    } else if (['line', 'circle', 'ellipse'].includes(tool)) {
+      if (currentLineStart && mousePos) {
+        const endPoint = snapToGridPoint(mousePos);
+        let points = [];
+        if (tool === 'line') {
+          points = [currentLineStart, endPoint];
+        } else if (tool === 'circle') {
+          const radius = Math.hypot(endPoint.x - currentLineStart.x, endPoint.y - currentLineStart.y);
+          points = generateCircleStrokes(currentLineStart, radius);
+        } else if (tool === 'ellipse') {
+          points = generateEllipseStrokes(currentLineStart, endPoint);
+        }
+        if (points.length > 1) {
+          onAddStrokes(getSymmetricStrokes(points, brushSize));
+        }
+      }
+      setCurrentLineStart(null);
+    } else if (tool === 'lasso') {
+      if (transformStrokes) {
+        setIsDraggingTransform(false);
+      } else {
+        if (currentStrokePoints.length > 2) {
+          const activeLayer = layers.find(l => l.id === activeLayerId);
+          if (activeLayer) {
+            const selected = [];
+            const remaining = [];
+            
+            if (activeLayer.strokes) {
+              activeLayer.strokes.forEach(stroke => {
+                const isSelected = stroke.points.some(p => pointInPolygon(p, currentStrokePoints));
+                if (isSelected) {
+                  selected.push(stroke);
+                } else {
+                  remaining.push(stroke);
+                }
+              });
+            }
+            
+            if (selected.length > 0) {
+              updateLayer(activeLayerId, { strokes: remaining });
+              setTransformStrokes(selected);
+            }
+          }
+        }
+        setCurrentLineStart(null);
+        setCurrentStrokePoints([]);
+      }
     } else if (tool === 'erase') {
       setIsErasing(false);
+    } else if (tool === 'eyedropper') {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const worldPos = screenToWorld(x, y);
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 1;
+      tempCanvas.height = 1;
+      const tCtx = tempCanvas.getContext('2d');
+      
+      layers.forEach(layer => {
+        if (!layer.visible) return;
+        const cache = layerCache.current.get(layer.id);
+        if (cache && cache.canvas) {
+          tCtx.globalAlpha = layer.opacity;
+          tCtx.globalCompositeOperation = layer.blendMode || 'source-over';
+          tCtx.drawImage(cache.canvas, -worldPos.x, -worldPos.y);
+        }
+      });
+      
+      const pixel = tCtx.getImageData(0, 0, 1, 1).data;
+      if (pixel[3] > 0) { // If not completely transparent
+        const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
+        updateLayer(activeLayerId, { color: hex });
+      }
+      setTool('draw'); // Switch back to draw after picking
     }
   };
 
@@ -415,7 +780,7 @@ const DrawingCanvas = forwardRef(({
     }
     setMousePos(null);
     setCurrentLineStart(null);
-    setCurrentStroke([]);
+    setCurrentStrokePoints([]);
     setIsDragging(false);
     setIsErasing(false);
   };
