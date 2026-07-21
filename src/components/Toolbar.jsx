@@ -11,6 +11,7 @@ const Toolbar = ({
   exportImage, exportSVG,
   saveProject, loadProject, openGallery,
   gridSpacing, setGridSpacing,
+  canvasWidth, setCanvasWidth,
   canvasHeight, setCanvasHeight,
   brushSize, setBrushSize,
   playTimelapse

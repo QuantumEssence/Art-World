@@ -189,7 +189,7 @@ const DrawingCanvas = forwardRef(({
 
   // Main draw loop
   const draw = () => {
-    if (!ctx || !canvasRef.current) return;
+    if (!ctx || !canvasRef.current || !containerRef.current) return;
     const canvas = canvasRef.current;
     
     const dpr = window.devicePixelRatio || 1;
